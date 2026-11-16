@@ -13,10 +13,10 @@
 (function (root) {
   'use strict';
 
-  var ex = function (name, sets, reps, rest, bar, note) {
-    return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar, note: note || '' };
+  var ex = function (name, sets, reps, rest, bar, note, power) {
+    return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar, note: note || '', power: !!power };
   };
-  var PLAN_VERSION = 2;
+  var PLAN_VERSION = 3;
   var LATER = 'Erst ab Woche 3 und nur, wenn der Rücken ruhig bleibt';
   var RULES = [
     'Woche 1–2: 2 Sätze, 3 Wdh. Reserve, ohne Sprünge und Würfe',
@@ -27,8 +27,8 @@
   function defaultPlan() {
     return [
       { id: uid(), name: 'Tag A', exercises: [
-        ex('Seitliche Sprünge', 3, '5', 90, false, LATER),
-        ex('Medizinball-Würfe rotatorisch', 3, '5/Seite', 90, false, LATER),
+        ex('Seitliche Sprünge', 3, '5', 90, false, LATER, true),
+        ex('Medizinball-Würfe rotatorisch', 3, '5/Seite', 90, false, LATER, true),
         ex('Bankdrücken', 3, '6-8', 150, true),
         ex('Brustgestütztes Rudern', 3, '8-10', 150),
         ex('Beinbeuger Maschine', 3, '10-12', 90, false, 'Ersetzt vorerst Rumänisches Kreuzheben'),
@@ -44,8 +44,8 @@
         ex('Face Pulls', 2, '15', 75),
         ex('Außenrotation am Kabel', 2, '15', 75)] },
       { id: uid(), name: 'Tag C', exercises: [
-        ex('Box Jumps', 3, '5', 90, false, LATER),
-        ex('10-m-Sprints mit Richtungswechsel', 4, '1', 90, false, LATER),
+        ex('Box Jumps', 3, '5', 90, false, LATER, true),
+        ex('10-m-Sprints mit Richtungswechsel', 4, '1', 90, false, LATER, true),
         ex('Brustpresse Maschine', 3, '8-12', 150),
         ex('Latzug', 3, '10-12', 150),
         ex('Beinpresse', 3, '8-10', 150, false, 'Ersetzt vorerst Kniebeugen'),
@@ -55,6 +55,18 @@
         ex('Trizepsdrücken am Kabel', 3, '12-15', 90),
         ex('Pallof Press', 3, '10/Seite', 75, false, 'Ersetzt vorerst hängendes Beinheben')] }
     ];
+  }
+
+  // Brings stored data of any earlier version up to the current shape.
+  function normalize(s) {
+    if (!s || !Array.isArray(s.plan)) s = { v: 1, planV: PLAN_VERSION, plan: defaultPlan(), sessions: [], active: null };
+    if (s.planV === 2) s.plan.forEach(function (w) { w.exercises.forEach(function (x) { x.power = x.note === LATER; }); });
+    else if (s.planV !== PLAN_VERSION) s.plan = defaultPlan();
+    s.planV = PLAN_VERSION;
+    s.sessions = s.sessions || [];
+    if (s.ramp === undefined) s.ramp = true;
+    if (!s.planStart && s.sessions.length) s.planStart = weekStart(s.sessions[0].start);
+    return s;
   }
 
   var ICON = {
@@ -148,10 +160,7 @@
     function load() {
       var s = null;
       try { s = JSON.parse(store.get(KEY) || 'null'); } catch (e) { s = null; }
-      if (!s || !Array.isArray(s.plan)) s = { v: 1, planV: PLAN_VERSION, plan: defaultPlan(), sessions: [], active: null };
-      if (s.planV !== PLAN_VERSION) { s.plan = defaultPlan(); s.planV = PLAN_VERSION; }
-      s.sessions = s.sessions || [];
-      return s;
+      return normalize(s);
     }
     function save() { store.set(KEY, JSON.stringify(state)); }
     function emit(type, payload) {
@@ -178,6 +187,22 @@
       });
       return best;
     }
+    // Plan week, counted from the week of the first workout.
+    function week() {
+      return state.planStart ? Math.max(1, Math.round((weekStart(Date.now()) - state.planStart) / 6048e5) + 1) : 1;
+    }
+    // Weeks 1–2 run a lighter version: 2 sets, no jumps or throws.
+    function effective(w) {
+      var easy = state.ramp && week() <= 2;
+      return w.exercises.filter(function (x) { return !(easy && x.power); }).map(function (x) {
+        return Object.assign({}, x, { sets: easy ? Math.min(2, x.sets) : x.sets });
+      });
+    }
+    function phaseHtml() {
+      if (!state.ramp) return '';
+      var wk = week();
+      return '<p class="gt-phase"><b>Woche ' + wk + '</b> · ' + (wk <= 2 ? '2 Sätze, 3 Wdh. Reserve, ohne Sprünge und Würfe' : '3 Sätze, 1–2 Wdh. Reserve') + '</p>';
+    }
     function nextWorkout() {
       if (!state.plan.length) return null;
       var last = state.sessions[state.sessions.length - 1];
@@ -186,14 +211,15 @@
     }
     function getStats() {
       var now = Date.now(), ws = weekStart(now), weeks = {};
-      var week = state.sessions.filter(function (s) { return s.start >= ws; });
+      var inWeek = state.sessions.filter(function (s) { return s.start >= ws; });
       state.sessions.forEach(function (s) { weeks[weekStart(s.start)] = 1; });
       var streak = 0, w = new Date(ws);
       if (!weeks[ws]) w.setDate(w.getDate() - 7);
       while (weeks[weekStart(w.getTime())]) { streak++; w.setDate(w.getDate() - 7); }
       return {
-        totalSessions: state.sessions.length, weekSessions: week.length, streakWeeks: streak,
-        weekVolume: week.reduce(function (a, s) { return a + volume(s); }, 0),
+        totalSessions: state.sessions.length, weekSessions: inWeek.length, streakWeeks: streak,
+        week: week(),
+        weekVolume: inWeek.reduce(function (a, s) { return a + volume(s); }, 0),
         lastWorkoutAt: state.sessions.length ? state.sessions[state.sessions.length - 1].end : null
       };
     }
@@ -203,9 +229,10 @@
       var w = state.plan.filter(function (x) { return x.id === wid; })[0];
       if (!w) return;
       if (state.active) { ui.workoutOpen = true; return render(); }
+      if (!state.planStart) state.planStart = weekStart(Date.now());
       state.active = {
         id: uid(), workoutId: w.id, name: w.name, start: Date.now(), restEnd: 0, restTotal: 0,
-        entries: w.exercises.map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note); })
+        entries: effective(w).map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note); })
       };
       ui.workoutOpen = true; save(); render(); keepAwake();
     }
@@ -301,10 +328,11 @@
         list.splice(j, 0, list.splice(i, 1)[0]); save(); render();
       },
       sheet: function (d) { ui.sheet = d.sheet; render(); },
+      'week-reset': function () { state.planStart = weekStart(Date.now()); save(); render(); toast('Plan läuft wieder ab Woche 1'); },
       'plan-apply': function () {
         var plan = parsePlan(el.querySelector('.js-plan-text').value);
         if (!plan.length) return toast('Keine Übungen erkannt (Format: Name 3x10)');
-        state.plan = plan; ui.sheet = null; ui.edit = null; save(); render();
+        state.plan = plan; state.ramp = false; ui.sheet = null; ui.edit = null; save(); render();
         toast(plan.length + ' Trainings übernommen');
       },
       'data-copy': function () {
@@ -317,7 +345,7 @@
         try {
           var s = JSON.parse(el.querySelector('.js-data-text').value);
           if (!Array.isArray(s.plan) || !Array.isArray(s.sessions)) throw 0;
-          s.planV = PLAN_VERSION; state = s; ui.sheet = null; save(); render(); toast('Backup eingespielt');
+          state = normalize(s); ui.sheet = null; save(); render(); toast('Backup eingespielt');
         } catch (e) { toast('Das ist kein gültiges Backup'); }
       }
     };
@@ -357,6 +385,7 @@
           if (d.f === 'reps') x.reps = t.value.trim();
           if (d.f === 'rest') x.rest = Math.max(0, Math.round(num(t.value)));
           if (d.f === 'bar') x.bar = t.checked;
+          if (d.f === 'power') x.power = t.checked;
         }
       }
       save();
@@ -391,8 +420,8 @@
         return h + '<div class="gt-empty"><b>Kein Plan</b>Lege im Tab „Plan“ dein erstes Training an.</div>';
       }
       if (!state.active) {
-        h += '<section class="gt-hero"><div><p class="gt-eyebrow">Als Nächstes dran</p><h2 class="gt-hero-title">' + esc(next.name) + '</h2></div>' +
-          '<ul class="gt-exlist">' + next.exercises.map(function (x) {
+        h += '<section class="gt-hero"><div><p class="gt-eyebrow">Als Nächstes dran</p><h2 class="gt-hero-title">' + esc(next.name) + '</h2>' + phaseHtml() + '</div>' +
+          '<ul class="gt-exlist">' + effective(next).map(function (x) {
             return '<li><span>' + esc(x.name) + '</span><span>' + x.sets + ' × ' + esc(x.reps) + '</span></li>';
           }).join('') + '</ul>' +
           '<button class="gt-btn gt-btn-accent gt-btn-big" data-act="start" data-wid="' + next.id + '">' + ICON.play + 'Training starten</button></section>';
@@ -402,7 +431,7 @@
         h += '<section class="gt-section"><h2 class="gt-h2">' + (state.active ? 'Dein Plan' : 'Oder heute lieber') + '</h2><div class="gt-list">' +
           others.map(function (w) {
             return '<button class="gt-item" data-act="start" data-wid="' + w.id + '"><span class="gt-grow"><span class="gt-item-title">' + esc(w.name) +
-              '</span><br><span class="gt-item-sub">' + w.exercises.length + ' Übungen</span></span><span class="gt-icon-btn">' + ICON.right + '</span></button>';
+              '</span><br><span class="gt-item-sub">' + effective(w).length + ' Übungen</span></span><span class="gt-icon-btn">' + ICON.right + '</span></button>';
           }).join('') + '</div></section>';
       }
       return h;
@@ -545,6 +574,7 @@
               '<div class="gt-edit-grid"><label class="gt-field">Sätze<input class="gt-text" id="' + id + '-s" inputmode="numeric" data-f="sets"' + b + ' value="' + x.sets + '"></label>' +
               '<label class="gt-field">Wdh<input class="gt-text" id="' + id + '-r" data-f="reps"' + b + ' value="' + esc(x.reps) + '"></label>' +
               '<label class="gt-field">Pause (s)<input class="gt-text" id="' + id + '-p" inputmode="numeric" data-f="rest"' + b + ' value="' + x.rest + '"></label></div>' +
+              '<label class="gt-toggle"><input type="checkbox" id="' + id + '-x" data-f="power"' + b + (x.power ? ' checked' : '') + '>Sprung oder Wurf (erst ab Woche 3)</label>' +
               '<div class="gt-row"><label class="gt-toggle gt-grow"><input type="checkbox" id="' + id + '-b" data-f="bar"' + b + (x.bar ? ' checked' : '') + '>Langhantel (Scheiben anzeigen)</label>' +
               '<button class="gt-icon-btn" data-act="ex-del"' + b + ' data-confirm aria-label="Übung löschen">' + ICON.trash + '</button></div></div>';
           });
@@ -553,10 +583,12 @@
         }
         h += '</article>';
       });
-      h += '<section class="gt-section"><h2 class="gt-h2">Regeln</h2><ul class="gt-rules">' + RULES.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul></section>';
+      h += '<section class="gt-section"><h2 class="gt-h2">Regeln' + (state.ramp ? ' · aktuell Woche ' + week() : '') + '</h2><ul class="gt-rules">' + RULES.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul></section>';
       h += '<div class="gt-tools"><button class="gt-btn" data-act="w-add">+ Training</button>' +
         '<button class="gt-btn" data-act="sheet" data-sheet="plan">Plan aus Text einfügen</button>' +
-        '<button class="gt-btn gt-btn-ghost" data-act="sheet" data-sheet="data">Backup</button></div>';
+        '<button class="gt-btn gt-btn-ghost" data-act="sheet" data-sheet="data">Backup</button>' +
+        (state.ramp ? '<button class="gt-btn gt-btn-ghost" data-act="week-reset" data-confirm>Wieder bei Woche 1 starten</button>' : '') + '</div>' +
+        (opts.getStatus ? '<p class="gt-status">' + esc(opts.getStatus()) + '</p>' : '');
       return h;
     }
 
@@ -639,6 +671,7 @@
     return {
       getState: function () { return JSON.parse(JSON.stringify(state)); },
       getStats: getStats,
+      reload: function () { state = load(); if (!state.active) ui.workoutOpen = false; render(); },
       setPlanFromText: function (text) { var p = parsePlan(text); if (p.length) { state.plan = p; save(); render(); } return p.length; },
       destroy: function () {
         clearInterval(timer); releaseAwake();

@@ -46,6 +46,19 @@ Rückgabe von `mount`: `getStats()` (Einheiten pro Woche, Serie, Volumen),
 
 In Bundler-Projekten: `const GymTracker = require('./gym-tracker.js')`.
 
+## Wochenlogik
+
+Der Standardplan zählt Wochen ab dem ersten Training. In Woche 1–2 legt die App
+automatisch 2 Sätze pro Übung an und lässt Übungen mit der Markierung „Sprung oder
+Wurf" weg; ab Woche 3 gilt der volle Plan. Im Tab „Plan" lässt sich die Zählung
+zurücksetzen. Ein per Text eingefügter Plan läuft ohne diese Logik.
+
+## Claude-Artifact
+
+`python3 artifact/build.py out.html` baut eine einzelne Datei inklusive
+`artifact/sync.js`, das die Daten im privaten Speicher des Claude-Kontos spiegelt
+(Capabilities `db` und `user`).
+
 ## Aussehen anpassen
 
 Alle Farben und Schriften sind CSS-Variablen mit Präfix `--gt-` (siehe Anfang von
