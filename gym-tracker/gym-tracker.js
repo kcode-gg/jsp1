@@ -13,23 +13,47 @@
 (function (root) {
   'use strict';
 
-  var ex = function (name, sets, reps, rest, bar) {
-    return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar };
+  var ex = function (name, sets, reps, rest, bar, note) {
+    return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar, note: note || '' };
   };
+  var PLAN_VERSION = 2;
+  var LATER = 'Erst ab Woche 3 und nur, wenn der Rücken ruhig bleibt';
+  var RULES = [
+    'Woche 1–2: 2 Sätze, 3 Wdh. Reserve, ohne Sprünge und Würfe',
+    'Woche 3–4: 3 Sätze, 1–2 Wdh. Reserve',
+    'Pausen: 2–3 Min bei Grundübungen, 1–2 Min bei Isolation',
+    'Schaffst du in allen Sätzen die obere Wiederholungszahl, erhöhst du das Gewicht.'
+  ];
   function defaultPlan() {
     return [
-      { id: uid(), name: 'Push', exercises: [
-        ex('Bankdrücken', 3, '6-10', 150, true), ex('Schrägbank Kurzhantel', 3, '8-12', 120),
-        ex('Schulterdrücken', 3, '8-12', 120), ex('Seitheben', 3, '12-15', 75),
-        ex('Trizepsdrücken Kabel', 3, '10-15', 75)] },
-      { id: uid(), name: 'Pull', exercises: [
-        ex('Klimmzüge', 3, '6-10', 150), ex('Langhantelrudern', 3, '8-10', 120, true),
-        ex('Latzug', 3, '10-12', 105), ex('Face Pulls', 3, '12-15', 75),
-        ex('Bizepscurls', 3, '10-12', 75)] },
-      { id: uid(), name: 'Beine', exercises: [
-        ex('Kniebeuge', 3, '6-10', 180, true), ex('Rumänisches Kreuzheben', 3, '8-10', 150, true),
-        ex('Beinpresse', 3, '10-12', 120), ex('Beinbeuger', 3, '10-15', 90),
-        ex('Wadenheben', 3, '12-15', 60)] }
+      { id: uid(), name: 'Tag A', exercises: [
+        ex('Seitliche Sprünge', 3, '5', 90, false, LATER),
+        ex('Medizinball-Würfe rotatorisch', 3, '5/Seite', 90, false, LATER),
+        ex('Bankdrücken', 3, '6-8', 150, true),
+        ex('Brustgestütztes Rudern', 3, '8-10', 150),
+        ex('Beinbeuger Maschine', 3, '10-12', 90, false, 'Ersetzt vorerst Rumänisches Kreuzheben'),
+        ex('Kabel-Flys', 2, '12-15', 90),
+        ex('Seitheben', 3, '12-20', 75),
+        ex('Trizeps über Kopf am Kabel', 3, '10-15', 90)] },
+      { id: uid(), name: 'Tag B', exercises: [
+        ex('Schrägbankdrücken Kurzhanteln', 3, '8-10', 150),
+        ex('Klimmzüge', 3, '6-10', 150),
+        ex('Bulgarian Split Squats', 3, '8/Seite', 150),
+        ex('Dips', 2, '8-12', 150),
+        ex('Schrägbank-Curls', 3, '10-12', 90),
+        ex('Face Pulls', 2, '15', 75),
+        ex('Außenrotation am Kabel', 2, '15', 75)] },
+      { id: uid(), name: 'Tag C', exercises: [
+        ex('Box Jumps', 3, '5', 90, false, LATER),
+        ex('10-m-Sprints mit Richtungswechsel', 4, '1', 90, false, LATER),
+        ex('Brustpresse Maschine', 3, '8-12', 150),
+        ex('Latzug', 3, '10-12', 150),
+        ex('Beinpresse', 3, '8-10', 150, false, 'Ersetzt vorerst Kniebeugen'),
+        ex('Butterfly', 2, '12-15', 90),
+        ex('Seitheben am Kabel', 3, '15', 75),
+        ex('Hammer-Curls', 3, '10-12', 90),
+        ex('Trizepsdrücken am Kabel', 3, '12-15', 90),
+        ex('Pallof Press', 3, '10/Seite', 75, false, 'Ersetzt vorerst hängendes Beinheben')] }
     ];
   }
 
@@ -97,10 +121,10 @@
     String(text).split(/\r?\n/).forEach(function (raw) {
       var line = raw.replace(/[*_#`|]/g, ' ').trim();
       if (!line) return;
-      var m = line.match(/^[-•–\s]*(?:\d+[.)]\s*)?(.+?)[\s:,–-]+(\d+)\s*[x×]\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
+      var m = line.match(/^[-•–\s]*(?:\d+[.)]\s*)?(.+?)[\s:,–-]+(\d+)\s*[x×]\s*(\d+(?:\s*[-–]\s*\d+)?(?:\s*\/\s*[A-Za-zäöüÄÖÜ]+)?)?/i);
       if (m) {
         if (!cur) { cur = { id: uid(), name: 'Training ' + (plan.length + 1), exercises: [] }; plan.push(cur); }
-        cur.exercises.push(ex(m[1].trim(), Math.min(10, +m[2] || 3), m[3].replace(/\s/g, '').replace('–', '-'), 120,
+        cur.exercises.push(ex(m[1].trim(), Math.min(10, +m[2] || 3), (m[3] || '1').replace(/\s/g, '').replace('–', '-'), 120,
           /langhantel|bankdr|kniebeuge|kreuzheben|squat|bench|deadlift/i.test(m[1])));
       } else {
         cur = { id: uid(), name: line.replace(/[:\s]+$/, '').slice(0, 40), exercises: [] }; plan.push(cur);
@@ -124,7 +148,8 @@
     function load() {
       var s = null;
       try { s = JSON.parse(store.get(KEY) || 'null'); } catch (e) { s = null; }
-      if (!s || !Array.isArray(s.plan)) s = { v: 1, plan: defaultPlan(), sessions: [], active: null };
+      if (!s || !Array.isArray(s.plan)) s = { v: 1, planV: PLAN_VERSION, plan: defaultPlan(), sessions: [], active: null };
+      if (s.planV !== PLAN_VERSION) { s.plan = defaultPlan(); s.planV = PLAN_VERSION; }
       s.sessions = s.sessions || [];
       return s;
     }
@@ -180,17 +205,17 @@
       if (state.active) { ui.workoutOpen = true; return render(); }
       state.active = {
         id: uid(), workoutId: w.id, name: w.name, start: Date.now(), restEnd: 0, restTotal: 0,
-        entries: w.exercises.map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar); })
+        entries: w.exercises.map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note); })
       };
       ui.workoutOpen = true; save(); render(); keepAwake();
     }
-    function newEntry(name, sets, reps, rest, bar) {
+    function newEntry(name, sets, reps, rest, bar, note) {
       var prev = lastEntry(key(name)), out = [];
       for (var i = 0; i < sets; i++) {
         var p = prev && (prev.sets[i] || prev.sets[prev.sets.length - 1]);
         out.push({ w: p ? p.w : '', r: p ? p.r : '', done: false });
       }
-      return { name: name, reps: reps, rest: rest, bar: !!bar, sets: out };
+      return { name: name, reps: reps, rest: rest, bar: !!bar, note: note || '', sets: out };
     }
     function toggleSet(ei, si) {
       var a = state.active, e = a.entries[ei], s = e.sets[si];
@@ -292,7 +317,7 @@
         try {
           var s = JSON.parse(el.querySelector('.js-data-text').value);
           if (!Array.isArray(s.plan) || !Array.isArray(s.sessions)) throw 0;
-          state = s; ui.sheet = null; save(); render(); toast('Backup eingespielt');
+          s.planV = PLAN_VERSION; state = s; ui.sheet = null; save(); render(); toast('Backup eingespielt');
         } catch (e) { toast('Das ist kein gültiges Backup'); }
       }
     };
@@ -401,7 +426,7 @@
       a.entries.forEach(function (e, ei) {
         var prev = lastEntry(key(e.name));
         h += '<section class="gt-ex"><div><h3 class="gt-ex-name">' + esc(e.name) + '</h3><div class="gt-ex-meta">' +
-          (e.reps ? 'Ziel ' + e.sets.length + ' × ' + esc(e.reps) + ' · ' : '') + 'Pause ' + clock(e.rest || 120) + '</div></div>' +
+          (e.reps ? 'Ziel ' + e.sets.length + ' × ' + esc(e.reps) + ' · ' : '') + 'Pause ' + clock(e.rest || 120) + (e.note ? '<br>' + esc(e.note) : '') + '</div></div>' +
           (e.bar ? '<div class="gt-plates js-plates" data-ei="' + ei + '">' + platesHtml(e) + '</div>' : '') +
           '<div class="gt-sets"><div class="gt-set-head"><span>#</span><span>Letztes Mal</span><span>kg</span><span>Wdh</span><span></span></div>';
         e.sets.forEach(function (s, si) {
@@ -411,7 +436,7 @@
             '<input class="gt-in" id="gt-w-' + ei + '-' + si + '" inputmode="decimal" enterkeyhint="done" aria-label="Gewicht in kg, Satz ' + (si + 1) +
             '" placeholder="kg" data-f="w" data-ei="' + ei + '" data-si="' + si + '" value="' + (s.w === '' ? '' : fmt(num(s.w))) + '">' +
             '<input class="gt-in" id="gt-r-' + ei + '-' + si + '" inputmode="numeric" enterkeyhint="done" aria-label="Wiederholungen, Satz ' + (si + 1) +
-            '" placeholder="' + esc(String(e.reps || '').split('-')[0] || '0') + '" data-f="r" data-ei="' + ei + '" data-si="' + si + '" value="' + (s.r === '' ? '' : fmt(num(s.r))) + '">' +
+            '" placeholder="' + (parseInt(e.reps, 10) || 0) + '" data-f="r" data-ei="' + ei + '" data-si="' + si + '" value="' + (s.r === '' ? '' : fmt(num(s.r))) + '">' +
             '<button class="gt-check" data-act="toggle-set" data-ei="' + ei + '" data-si="' + si + '" aria-label="Satz ' + (si + 1) + (s.done ? ' zurücknehmen' : ' abhaken') + '" aria-pressed="' + !!s.done + '">' + ICON.check + '</button></div>';
         });
         h += '</div><div class="gt-ex-foot"><button class="gt-btn gt-btn-ghost gt-btn-sm" data-act="add-set" data-ei="' + ei + '">+ Satz</button>' +
@@ -528,6 +553,7 @@
         }
         h += '</article>';
       });
+      h += '<section class="gt-section"><h2 class="gt-h2">Regeln</h2><ul class="gt-rules">' + RULES.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul></section>';
       h += '<div class="gt-tools"><button class="gt-btn" data-act="w-add">+ Training</button>' +
         '<button class="gt-btn" data-act="sheet" data-sheet="plan">Plan aus Text einfügen</button>' +
         '<button class="gt-btn gt-btn-ghost" data-act="sheet" data-sheet="data">Backup</button></div>';

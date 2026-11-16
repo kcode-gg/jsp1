@@ -273,6 +273,7 @@
 .gt-field .gt-text { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .gt-toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--gt-muted); min-height: 44px; }
 .gt-toggle input { width: 20px; height: 20px; accent-color: var(--gt-accent); }
+.gt-rules { margin: 0; padding: 14px 16px 14px 34px; background: var(--gt-surface); border-radius: var(--gt-radius); display: flex; flex-direction: column; gap: 8px; color: var(--gt-muted); }
 .gt-tools { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .gt-toast {
