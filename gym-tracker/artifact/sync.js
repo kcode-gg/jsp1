@@ -13,7 +13,7 @@
     storage: { get: ls.get, set: function (k, v) { ls.set(k, v); ls.set(TKEY, String(Date.now())); dirty = true; schedule(); } },
     getStatus: function () { return status; }
   });
-  function setStatus(s) { if (s !== status) { status = s; gym.reload(); } }
+  function setStatus(s) { status = s; gym.refreshStatus(); }
   function schedule() { clearTimeout(timer); if (col) timer = setTimeout(push, 2500); }
   function monthKey(t) { var d = new Date(t); return 'm-' + d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2); }
 

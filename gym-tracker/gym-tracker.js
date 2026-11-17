@@ -17,7 +17,8 @@
     return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar, note: note || '', power: !!power };
   };
   var PLAN_VERSION = 3;
-  var LATER = 'Erst ab Woche 3 und nur, wenn der Rücken ruhig bleibt';
+  var OLD_LATER = 'Erst ab Woche 3 und nur, wenn der Rücken ruhig bleibt';
+  var LATER = 'Nur, wenn der Rücken dabei ruhig bleibt';
   var RULES = [
     'Woche 1–2: 2 Sätze, 3 Wdh. Reserve, ohne Sprünge und Würfe',
     'Woche 3–4: 3 Sätze, 1–2 Wdh. Reserve',
@@ -60,9 +61,10 @@
   // Brings stored data of any earlier version up to the current shape.
   function normalize(s) {
     if (!s || !Array.isArray(s.plan)) s = { v: 1, planV: PLAN_VERSION, plan: defaultPlan(), sessions: [], active: null };
-    if (s.planV === 2) s.plan.forEach(function (w) { w.exercises.forEach(function (x) { x.power = x.note === LATER; }); });
+    if (s.planV === 2) s.plan.forEach(function (w) { w.exercises.forEach(function (x) { x.power = x.note === OLD_LATER; }); });
     else if (s.planV !== PLAN_VERSION) s.plan = defaultPlan();
     s.planV = PLAN_VERSION;
+    s.plan.forEach(function (w) { w.exercises.forEach(function (x) { if (x.note === OLD_LATER) x.note = LATER; }); });
     s.sessions = s.sessions || [];
     if (s.ramp === undefined) s.ramp = true;
     if (!s.planStart && s.sessions.length) s.planStart = weekStart(s.sessions[0].start);
@@ -98,6 +100,12 @@
   }
   function fmt(n) { return (Math.round(n * 100) / 100).toLocaleString('de-DE'); }
   function fmtVol(kg) { return kg >= 10000 ? fmt(Math.round(kg / 100) / 10) + ' t' : fmt(Math.round(kg)) + ' kg'; }
+  // "3 × 8–12"; a rep count of 1 (sprints, single efforts) shows as "4 ×"
+  function target(sets, reps) {
+    reps = String(reps || '').replace('-', '–');
+    return sets + ' ×' + (reps && reps !== '1' ? ' ' + reps : '');
+  }
+  function topReps(reps) { var m = String(reps || '').match(/(\d+)(?:\/[^\d]*)?$/); return m ? +m[1] : 0; }
   function key(name) { return String(name).trim().toLowerCase(); }
   function dayKey(t) { var d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
   function weekStart(t) {
@@ -154,7 +162,7 @@
       set: function (k, v) { try { root.localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
     };
     var state = load();
-    var ui = { tab: 'home', workoutOpen: !!state.active, open: {}, edit: null, progKey: null, sheet: null, summary: null, toast: null };
+    var ui = { exOpen: {}, tab: 'home', workoutOpen: !!state.active, open: {}, edit: null, progKey: null, sheet: null, summary: null, toast: null };
     var toastTimer = null, wakeLock = null;
 
     function load() {
@@ -232,23 +240,24 @@
       if (!state.planStart) state.planStart = weekStart(Date.now());
       state.active = {
         id: uid(), workoutId: w.id, name: w.name, start: Date.now(), restEnd: 0, restTotal: 0,
-        entries: effective(w).map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note); })
+        entries: effective(w).map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note, x.power); })
       };
-      ui.workoutOpen = true; save(); render(); keepAwake();
+      ui.workoutOpen = true; ui.exOpen = {}; save(); render(); keepAwake();
     }
-    function newEntry(name, sets, reps, rest, bar, note) {
+    function newEntry(name, sets, reps, rest, bar, note, noLoad) {
       var prev = lastEntry(key(name)), out = [];
       for (var i = 0; i < sets; i++) {
         var p = prev && (prev.sets[i] || prev.sets[prev.sets.length - 1]);
-        out.push({ w: p ? p.w : '', r: p ? p.r : '', done: false });
+        out.push({ w: p && !noLoad ? p.w : '', r: p ? p.r : (noLoad ? parseInt(reps, 10) || '' : ''), done: false });
       }
-      return { name: name, reps: reps, rest: rest, bar: !!bar, note: note || '', sets: out };
+      return { name: name, reps: reps, rest: rest, bar: !!bar, note: note || '', noLoad: !!noLoad, sets: out };
     }
     function toggleSet(ei, si) {
       var a = state.active, e = a.entries[ei], s = e.sets[si];
       if (!s.done && !num(s.r)) return toast('Wiederholungen eintragen');
-      s.done = !s.done;
+      s.done = !s.done; ui.exOpen[ei] = false;
       if (s.done) {
+        prime();
         var rest = +e.rest || 120;
         a.restEnd = Date.now() + rest * 1000; a.restTotal = rest;
         var before = bestBefore(key(e.name)), sc = score(s);
@@ -276,6 +285,28 @@
       ui.workoutOpen = false; ui.summary = payload; releaseAwake(); render();
       emit('workout:finish', payload);
     }
+    // Short double beep when the rest is over. The audio context is unlocked on the first tick of a set.
+    var audio = null;
+    function prime() {
+      try {
+        var AC = root.AudioContext || root.webkitAudioContext;
+        if (!audio && AC) audio = new AC();
+        if (audio && audio.state === 'suspended') audio.resume();
+      } catch (e) { /* optional */ }
+    }
+    function beep() {
+      if (!audio) return;
+      try {
+        [0, 0.22].forEach(function (at) {
+          var o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + at;
+          o.frequency.value = 880; o.connect(g); g.connect(audio.destination);
+          g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+          o.start(t); o.stop(t + 0.18);
+        });
+      } catch (e) { /* optional */ }
+    }
+    function onVisible() { if (document.visibilityState === 'visible' && state.active && ui.workoutOpen) keepAwake(); tick(); }
+    function onFocus(e) { if (e.target.classList && e.target.classList.contains('gt-in')) { try { e.target.select(); } catch (err) { /* optional */ } } }
     function keepAwake() {
       try {
         if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; }, function () {});
@@ -290,13 +321,14 @@
       resume: function () { ui.workoutOpen = true; render(); keepAwake(); },
       minimize: function () { ui.workoutOpen = false; render(); },
       'toggle-set': function (d) { toggleSet(+d.ei, +d.si); },
+      'ex-toggle': function (d) { ui.exOpen[d.ei] = !ui.exOpen[d.ei]; render(); },
       'add-set': function (d) {
         var sets = state.active.entries[+d.ei].sets, l = sets[sets.length - 1];
         sets.push({ w: l ? l.w : '', r: l ? l.r : '', done: false }); save(); render();
       },
       'del-set': function (d) {
         var e = state.active.entries[+d.ei];
-        if (e.sets.length > 1) e.sets.pop(); else state.active.entries.splice(+d.ei, 1);
+        if (e.sets.length > 1) e.sets.pop(); else { state.active.entries.splice(+d.ei, 1); ui.exOpen = {}; }
         save(); render();
       },
       'add-ex': function () {
@@ -421,10 +453,10 @@
       }
       if (!state.active) {
         h += '<section class="gt-hero"><div><p class="gt-eyebrow">Als Nächstes dran</p><h2 class="gt-hero-title">' + esc(next.name) + '</h2>' + phaseHtml() + '</div>' +
+          '<button class="gt-btn gt-btn-accent gt-btn-big" data-act="start" data-wid="' + next.id + '">' + ICON.play + 'Training starten</button>' +
           '<ul class="gt-exlist">' + effective(next).map(function (x) {
-            return '<li><span>' + esc(x.name) + '</span><span>' + x.sets + ' × ' + esc(x.reps) + '</span></li>';
-          }).join('') + '</ul>' +
-          '<button class="gt-btn gt-btn-accent gt-btn-big" data-act="start" data-wid="' + next.id + '">' + ICON.play + 'Training starten</button></section>';
+            return '<li><span>' + esc(x.name) + '</span><span>' + esc(target(x.sets, x.reps)) + '</span></li>';
+          }).join('') + '</ul></section>';
       }
       var others = state.plan.filter(function (w) { return state.active || w.id !== next.id; });
       if (others.length) {
@@ -454,22 +486,36 @@
         '<div class="gt-bar"><i style="width:' + (total ? done / total * 100 : 0) + '%"></i></div><div class="gt-wo-body">';
       a.entries.forEach(function (e, ei) {
         var prev = lastEntry(key(e.name));
-        h += '<section class="gt-ex"><div><h3 class="gt-ex-name">' + esc(e.name) + '</h3><div class="gt-ex-meta">' +
-          (e.reps ? 'Ziel ' + e.sets.length + ' × ' + esc(e.reps) + ' · ' : '') + 'Pause ' + clock(e.rest || 120) + (e.note ? '<br>' + esc(e.note) : '') + '</div></div>' +
+        var allDone = e.sets.length && e.sets.every(function (s) { return s.done; });
+        var setText = function (x) { return (num(x.w) ? fmt(num(x.w)) + ' × ' : '') + fmt(num(x.r)); };
+        if (allDone && !ui.exOpen[ei]) {
+          h += '<button class="gt-ex gt-ex-done" data-act="ex-toggle" data-ei="' + ei + '" aria-expanded="false"><span class="gt-ex-tick">' + ICON.check +
+            '</span><span class="gt-grow"><span class="gt-item-title">' + esc(e.name) + '</span><br><span class="gt-item-sub">' + e.sets.map(setText).join(' · ') +
+            (e.sets.some(function (s) { return s.pr; }) ? ' <span class="gt-badge">REKORD</span>' : '') + '</span></span>' + ICON.down + '</button>';
+          return;
+        }
+        var top = topReps(e.reps), hint = '';
+        if (prev && top && !e.noLoad && prev.sets.length >= Math.min(2, e.sets.length) &&
+            prev.sets.every(function (x) { return num(x.r) >= top && num(x.w) > 0; })) {
+          hint = '<div class="gt-hint">' + ICON.up + 'Letztes Mal alle Sätze mit ' + top + ' Wdh. geschafft. Heute mehr Gewicht.</div>';
+        }
+        h += '<section class="gt-ex' + (e.noLoad ? ' is-noload' : '') + '"><div><h3 class="gt-ex-name">' + esc(e.name) + '</h3><div class="gt-ex-meta">' +
+          (e.reps ? 'Ziel ' + esc(target(e.sets.length, e.reps)) + ' · ' : '') + 'Pause ' + clock(e.rest || 120) + (e.note ? '<br>' + esc(e.note) : '') + '</div></div>' + hint +
           (e.bar ? '<div class="gt-plates js-plates" data-ei="' + ei + '">' + platesHtml(e) + '</div>' : '') +
-          '<div class="gt-sets"><div class="gt-set-head"><span>#</span><span>Letztes Mal</span><span>kg</span><span>Wdh</span><span></span></div>';
+          '<div class="gt-sets"><div class="gt-set-head"><span>#</span><span>Letztes Mal</span><span>' + (e.noLoad ? '' : 'kg') + '</span><span>Wdh</span><span></span></div>';
         e.sets.forEach(function (s, si) {
           var p = prev && prev.sets[si];
           h += '<div class="gt-set' + (s.done ? ' is-done' : '') + '"><span class="gt-set-n">' + (si + 1) + '</span>' +
-            '<span class="gt-set-prev">' + (s.pr ? '<span class="gt-badge">REKORD</span>' : p ? fmt(num(p.w)) + ' × ' + fmt(num(p.r)) : '–') + '</span>' +
-            '<input class="gt-in" id="gt-w-' + ei + '-' + si + '" inputmode="decimal" enterkeyhint="done" aria-label="Gewicht in kg, Satz ' + (si + 1) +
-            '" placeholder="kg" data-f="w" data-ei="' + ei + '" data-si="' + si + '" value="' + (s.w === '' ? '' : fmt(num(s.w))) + '">' +
+            '<span class="gt-set-prev">' + (s.pr ? '<span class="gt-badge">REKORD</span>' : p ? setText(p) : '–') + '</span>' +
+            (e.noLoad ? '<span></span>' : '<input class="gt-in" id="gt-w-' + ei + '-' + si + '" inputmode="decimal" enterkeyhint="done" aria-label="Gewicht in kg, Satz ' + (si + 1) +
+            '" placeholder="kg" data-f="w" data-ei="' + ei + '" data-si="' + si + '" value="' + (s.w === '' ? '' : fmt(num(s.w))) + '">') +
             '<input class="gt-in" id="gt-r-' + ei + '-' + si + '" inputmode="numeric" enterkeyhint="done" aria-label="Wiederholungen, Satz ' + (si + 1) +
             '" placeholder="' + (parseInt(e.reps, 10) || 0) + '" data-f="r" data-ei="' + ei + '" data-si="' + si + '" value="' + (s.r === '' ? '' : fmt(num(s.r))) + '">' +
             '<button class="gt-check" data-act="toggle-set" data-ei="' + ei + '" data-si="' + si + '" aria-label="Satz ' + (si + 1) + (s.done ? ' zurücknehmen' : ' abhaken') + '" aria-pressed="' + !!s.done + '">' + ICON.check + '</button></div>';
         });
         h += '</div><div class="gt-ex-foot"><button class="gt-btn gt-btn-ghost gt-btn-sm" data-act="add-set" data-ei="' + ei + '">+ Satz</button>' +
-          '<button class="gt-btn gt-btn-ghost gt-btn-sm" data-act="del-set" data-ei="' + ei + '">− Satz</button></div></section>';
+          '<button class="gt-btn gt-btn-ghost gt-btn-sm" data-act="del-set" data-ei="' + ei + '">− Satz</button>' +
+          (allDone ? '<button class="gt-btn gt-btn-ghost gt-btn-sm" data-act="ex-toggle" data-ei="' + ei + '">Einklappen</button>' : '') + '</div></section>';
       });
       h += '<div class="gt-addrow"><input class="gt-text js-new-ex" id="gt-new-ex" placeholder="Weitere Übung" aria-label="Weitere Übung hinzufügen" enterkeyhint="done">' +
         '<button class="gt-btn" data-act="add-ex">Hinzufügen</button></div>' +
@@ -541,7 +587,7 @@
           if (key(e.name) !== k) return;
           count++;
           e.sets.forEach(function (x) { if (num(x.w) > 0) weighted = true; if (num(x.w) > topW || !topSet) { if (num(x.w) >= topW) { topW = num(x.w); topSet = x; } } });
-          pts.push({ t: s.start, v: Math.max.apply(null, e.sets.map(score)) });
+          pts.push({ t: s.start, v: Math.max.apply(null, e.sets.map(score)), sets: e.sets });
         });
       });
       var unit = weighted ? 'kg' : 'Wdh', best = Math.max.apply(null, pts.map(function (p) { return p.v; }));
@@ -550,6 +596,10 @@
         '<div class="gt-stat"><b>' + (weighted ? fmt(topW) + ' × ' + fmt(num(topSet.r)) : count) + '</b><span>' + (weighted ? 'schwerster Satz' : 'Einheiten') + '</span></div>' +
         '<div class="gt-stat"><b>' + (delta > 0 ? '+' : '') + fmt(Math.round(delta * 10) / 10) + '</b><span>' + unit + ' seit Start</span></div></div>';
       h += '<section class="gt-section"><h2 class="gt-h2">' + (weighted ? 'Geschätztes 1RM pro Einheit (kg)' : 'Beste Wiederholungen pro Einheit') + '</h2><div class="gt-chart">' + chart(pts, unit) + '</div></section>';
+      h += '<section class="gt-section"><h2 class="gt-h2">Letzte Einheiten</h2><div class="gt-list">' + pts.slice(-5).reverse().map(function (p) {
+        return '<div class="gt-item gt-item-static"><span class="gt-grow"><span class="gt-item-title">' + esc(new Date(p.t).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' })) +
+          '</span><br><span class="gt-item-sub">' + p.sets.map(function (x) { return (num(x.w) ? fmt(num(x.w)) + ' × ' : '') + fmt(num(x.r)); }).join(' · ') + '</span></span></div>';
+      }).join('') + '</div></section>';
       return h;
     }
 
@@ -561,7 +611,7 @@
           w.exercises.length + ' Übungen</div></div><button class="gt-btn gt-btn-sm' + (edit ? ' gt-btn-accent' : '') + '" data-act="w-edit" data-wid="' + w.id + '">' + (edit ? 'Fertig' : 'Bearbeiten') + '</button></div>';
         if (!edit) {
           h += '<ul class="gt-exlist" style="padding:0 16px 8px">' + w.exercises.map(function (x) {
-            return '<li><span>' + esc(x.name) + '</span><span>' + x.sets + ' × ' + esc(x.reps) + '</span></li>';
+            return '<li><span>' + esc(x.name) + '</span><span>' + esc(target(x.sets, x.reps)) + '</span></li>';
           }).join('') + '</ul>';
         } else {
           var a = ' data-wid="' + w.id + '"';
@@ -583,12 +633,17 @@
         }
         h += '</article>';
       });
-      h += '<section class="gt-section"><h2 class="gt-h2">Regeln' + (state.ramp ? ' · aktuell Woche ' + week() : '') + '</h2><ul class="gt-rules">' + RULES.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul></section>';
-      h += '<div class="gt-tools"><button class="gt-btn" data-act="w-add">+ Training</button>' +
-        '<button class="gt-btn" data-act="sheet" data-sheet="plan">Plan aus Text einfügen</button>' +
-        '<button class="gt-btn gt-btn-ghost" data-act="sheet" data-sheet="data">Backup</button>' +
-        (state.ramp ? '<button class="gt-btn gt-btn-ghost" data-act="week-reset" data-confirm>Wieder bei Woche 1 starten</button>' : '') + '</div>' +
-        (opts.getStatus ? '<p class="gt-status">' + esc(opts.getStatus()) + '</p>' : '');
+      h += '<section class="gt-section"><h2 class="gt-h2">Regeln</h2><ul class="gt-rules">' + RULES.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul></section>';
+      var row = function (attrs, title, sub) {
+        return '<button class="gt-item" ' + attrs + '><span class="gt-grow"><span class="gt-item-title">' + title + '</span><br><span class="gt-item-sub">' + sub +
+          '</span></span><span class="gt-icon-btn">' + ICON.right + '</span></button>';
+      };
+      h += '<button class="gt-btn" data-act="w-add">+ Training hinzufügen</button>';
+      h += '<section class="gt-section"><h2 class="gt-h2">Verwalten</h2><div class="gt-list">' +
+        row('data-act="sheet" data-sheet="plan"', 'Plan aus Text einfügen', 'Ersetzt den aktuellen Plan') +
+        row('data-act="sheet" data-sheet="data"', 'Backup', 'Daten kopieren oder zurückspielen') +
+        (state.ramp ? row('data-act="week-reset" data-confirm', 'Wieder bei Woche 1 starten', 'Aktuell Woche ' + week()) : '') + '</div>' +
+        (opts.getStatus ? '<p class="gt-status js-status">' + esc(opts.getStatus()) + '</p>' : '') + '</section>';
       return h;
     }
 
@@ -597,7 +652,7 @@
       if (ui.summary) {
         var s = ui.summary;
         h = '<div><p class="gt-eyebrow">' + esc(s.name) + ' abgeschlossen</p><h2 class="gt-h1">Stark.</h2></div>' +
-          '<div class="gt-sum"><div><b>' + s.durationMin + '</b><span>Minuten</span></div><div><b>' + s.sets + '</b><span>Sätze</span></div><div><b>' +
+          '<div class="gt-sum"><div><b>' + s.durationMin + '</b><span>Min</span></div><div><b>' + s.sets + '</b><span>Sätze</span></div><div><b>' +
           fmtVol(s.volume) + '</b><span>bewegt</span></div></div>' +
           (s.prs.length ? '<div class="gt-section"><h3 class="gt-h2">Neue Rekorde</h3><div class="gt-prlist">' + s.prs.map(function (n) {
             return '<span class="gt-badge">' + esc(n) + '</span>';
@@ -654,6 +709,7 @@
       if (a.restEnd && left <= 0) {
         a.restEnd = 0; save();
         try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) { /* optional */ }
+        beep();
       }
       rest.hidden = !a.restEnd;
       if (a.restEnd) {
@@ -665,17 +721,21 @@
     el.addEventListener('click', onClick);
     el.addEventListener('input', onInput);
     el.addEventListener('keydown', onKey);
+    el.addEventListener('focusin', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
     var timer = setInterval(tick, 1000);
     render();
 
     return {
       getState: function () { return JSON.parse(JSON.stringify(state)); },
       getStats: getStats,
+      refreshStatus: function () { var s = el.querySelector('.js-status'); if (s && opts.getStatus) s.textContent = opts.getStatus(); },
       reload: function () { state = load(); if (!state.active) ui.workoutOpen = false; render(); },
       setPlanFromText: function (text) { var p = parsePlan(text); if (p.length) { state.plan = p; save(); render(); } return p.length; },
       destroy: function () {
         clearInterval(timer); releaseAwake();
         el.removeEventListener('click', onClick); el.removeEventListener('input', onInput); el.removeEventListener('keydown', onKey);
+        el.removeEventListener('focusin', onFocus); document.removeEventListener('visibilitychange', onVisible);
         el.innerHTML = '';
       }
     };
