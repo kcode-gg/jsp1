@@ -46,6 +46,12 @@ Rückgabe von `mount`: `getStats()` (Einheiten pro Woche, Serie, Volumen),
 
 In Bundler-Projekten: `const GymTracker = require('./gym-tracker.js')`.
 
+## Nachtragen
+
+Auf „Heute" lässt sich die Wochenleiste mit den Pfeilen zurückblättern. Ein Tipp auf einen
+vergangenen Tag öffnet die Einträge dieses Tages und erlaubt, ein Training nachzutragen
+(ohne Timer, mit frei wählbarer Dauer). Das Event `workout:finish` trägt dann `backfilled: true`.
+
 ## Wochenlogik
 
 Der Standardplan zählt Wochen ab dem ersten Training. In Woche 1–2 legt die App

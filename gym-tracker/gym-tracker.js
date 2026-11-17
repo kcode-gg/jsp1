@@ -72,6 +72,8 @@
   }
 
   var ICON = {
+    left: '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
+    plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
     home: '<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
     hist: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
     chart: '<svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l4-5 3 3 4-6"/></svg>',
@@ -108,6 +110,8 @@
   function topReps(reps) { var m = String(reps || '').match(/(\d+)(?:\/[^\d]*)?$/); return m ? +m[1] : 0; }
   function key(name) { return String(name).trim().toLowerCase(); }
   function dayKey(t) { var d = new Date(t); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+  function dayStart(t) { var d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  function dateLabel(t, long) { return new Date(t).toLocaleDateString('de-DE', long ? { weekday: 'long', day: 'numeric', month: 'long' } : { weekday: 'short', day: 'numeric', month: 'short' }); }
   function weekStart(t) {
     var d = new Date(t); d.setHours(0, 0, 0, 0);
     d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime();
@@ -162,7 +166,7 @@
       set: function (k, v) { try { root.localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
     };
     var state = load();
-    var ui = { exOpen: {}, tab: 'home', workoutOpen: !!state.active, open: {}, edit: null, progKey: null, sheet: null, summary: null, toast: null };
+    var ui = { weekOff: 0, day: null, exOpen: {}, tab: 'home', workoutOpen: !!state.active, open: {}, edit: null, progKey: null, sheet: null, summary: null, toast: null };
     var toastTimer = null, wakeLock = null;
 
     function load() {
@@ -181,27 +185,29 @@
     }
 
     /* ---------- derived data ---------- */
-    function lastEntry(k) {
+    function lastEntry(k, before) {
       for (var i = state.sessions.length - 1; i >= 0; i--) {
+        if (before && state.sessions[i].start >= before) continue;
         var e = state.sessions[i].entries.filter(function (x) { return key(x.name) === k; })[0];
         if (e && e.sets.length) return e;
       }
       return null;
     }
-    function bestBefore(k) {
+    function bestBefore(k, before) {
       var best = 0;
       state.sessions.forEach(function (s) {
+        if (before && s.start >= before) return;
         s.entries.forEach(function (e) { if (key(e.name) === k) e.sets.forEach(function (x) { best = Math.max(best, score(x)); }); });
       });
       return best;
     }
     // Plan week, counted from the week of the first workout.
-    function week() {
-      return state.planStart ? Math.max(1, Math.round((weekStart(Date.now()) - state.planStart) / 6048e5) + 1) : 1;
+    function week(at) {
+      return state.planStart ? Math.max(1, Math.round((weekStart(at || Date.now()) - state.planStart) / 6048e5) + 1) : 1;
     }
     // Weeks 1–2 run a lighter version: 2 sets, no jumps or throws.
-    function effective(w) {
-      var easy = state.ramp && week() <= 2;
+    function effective(w, at) {
+      var easy = state.ramp && week(at) <= 2;
       return w.exercises.filter(function (x) { return !(easy && x.power); }).map(function (x) {
         return Object.assign({}, x, { sets: easy ? Math.min(2, x.sets) : x.sets });
       });
@@ -233,19 +239,23 @@
     }
 
     /* ---------- actions ---------- */
-    function startWorkout(wid) {
+    // `at` (a past day) logs the workout afterwards: no timers, dated to that day.
+    function startWorkout(wid, at, minutes) {
       var w = state.plan.filter(function (x) { return x.id === wid; })[0];
       if (!w) return;
       if (state.active) { ui.workoutOpen = true; return render(); }
-      if (!state.planStart) state.planStart = weekStart(Date.now());
+      var start = at || Date.now();
+      if (!state.planStart || weekStart(start) < state.planStart) state.planStart = weekStart(start);
       state.active = {
-        id: uid(), workoutId: w.id, name: w.name, start: Date.now(), restEnd: 0, restTotal: 0,
-        entries: effective(w).map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note, x.power); })
+        id: uid(), workoutId: w.id, name: w.name, start: start, restEnd: 0, restTotal: 0,
+        entries: effective(w, start).map(function (x) { return newEntry(x.name, x.sets, x.reps, x.rest, x.bar, x.note, x.power, start); })
       };
-      ui.workoutOpen = true; ui.exOpen = {}; save(); render(); keepAwake();
+      if (at) { state.active.backfill = true; state.active.minutes = minutes || 60; }
+      ui.workoutOpen = true; ui.exOpen = {}; ui.sheet = null; save(); render();
+      if (!at) keepAwake();
     }
-    function newEntry(name, sets, reps, rest, bar, note, noLoad) {
-      var prev = lastEntry(key(name)), out = [];
+    function newEntry(name, sets, reps, rest, bar, note, noLoad, before) {
+      var prev = lastEntry(key(name), before), out = [];
       for (var i = 0; i < sets; i++) {
         var p = prev && (prev.sets[i] || prev.sets[prev.sets.length - 1]);
         out.push({ w: p && !noLoad ? p.w : '', r: p ? p.r : (noLoad ? parseInt(reps, 10) || '' : ''), done: false });
@@ -257,10 +267,12 @@
       if (!s.done && !num(s.r)) return toast('Wiederholungen eintragen');
       s.done = !s.done; ui.exOpen[ei] = false;
       if (s.done) {
-        prime();
-        var rest = +e.rest || 120;
-        a.restEnd = Date.now() + rest * 1000; a.restTotal = rest;
-        var before = bestBefore(key(e.name)), sc = score(s);
+        if (!a.backfill) {
+          prime();
+          var rest = +e.rest || 120;
+          a.restEnd = Date.now() + rest * 1000; a.restTotal = rest;
+        }
+        var before = bestBefore(key(e.name), a.start), sc = score(s);
         s.pr = before > 0 && sc > before && !e.sets.some(function (o, i) { return i !== si && o.done && score(o) >= sc; });
         emit('set:done', { exercise: e.name, weight: num(s.w), reps: num(s.r), pr: !!s.pr });
         if (s.pr) emit('pr', { exercise: e.name, weight: num(s.w), reps: num(s.r) });
@@ -276,11 +288,14 @@
         if (e.sets.some(function (s) { return s.pr; })) prs.push(e.name);
       });
       a.entries = a.entries.filter(function (e) { return e.sets.length; });
-      a.end = Date.now(); delete a.restEnd; delete a.restTotal;
-      state.sessions.push(a); state.active = null; save();
+      a.end = a.backfill ? a.start + a.minutes * 60000 : Date.now();
+      delete a.restEnd; delete a.restTotal; delete a.minutes;
+      state.sessions.push(a);
+      state.sessions.sort(function (x, y) { return x.start - y.start; });
+      state.active = null; save();
       var payload = {
         session: a, name: a.name, durationMin: Math.max(1, Math.round((a.end - a.start) / 60000)),
-        volume: volume(a), sets: doneSets(a), prs: prs, stats: getStats()
+        volume: volume(a), sets: doneSets(a), prs: prs, stats: getStats(), backfilled: !!a.backfill
       };
       ui.workoutOpen = false; ui.summary = payload; releaseAwake(); render();
       emit('workout:finish', payload);
@@ -318,9 +333,17 @@
     var actions = {
       tab: function (d) { ui.tab = d.tab; render(true); },
       start: function (d) { startWorkout(d.wid); },
-      resume: function () { ui.workoutOpen = true; render(); keepAwake(); },
+      resume: function () { ui.workoutOpen = true; ui.sheet = null; render(); if (!state.active.backfill) keepAwake(); },
       minimize: function () { ui.workoutOpen = false; render(); },
       'toggle-set': function (d) { toggleSet(+d.ei, +d.si); },
+      'week-shift': function (d) { ui.weekOff = Math.min(0, ui.weekOff + +d.dir); render(); },
+      day: function (d) { ui.day = +d.t; ui.sheet = 'day'; render(); },
+      backfill: function (d) {
+        var inp = el.querySelector('.js-bf-min'), min = Math.max(1, Math.min(300, Math.round(num(inp && inp.value)) || 60));
+        var today = ui.day === dayStart(Date.now());
+        startWorkout(d.wid, today ? 0 : ui.day + 18 * 36e5, min);
+      },
+      'open-session': function (d) { ui.sheet = null; ui.tab = 'history'; ui.open[d.id] = true; render(true); },
       'ex-toggle': function (d) { ui.exOpen[d.ei] = !ui.exOpen[d.ei]; render(); },
       'add-set': function (d) {
         var sets = state.active.entries[+d.ei].sets, l = sets[sets.length - 1];
@@ -340,7 +363,7 @@
       discard: function () { state.active = null; ui.workoutOpen = false; releaseAwake(); save(); render(); toast('Training verworfen'); },
       'rest-add': function () { var a = state.active; a.restEnd += 15000; a.restTotal += 15; save(); tick(); },
       'rest-skip': function () { state.active.restEnd = 0; save(); tick(); },
-      'close-sheet': function () { ui.sheet = null; ui.summary = null; render(); },
+      'close-sheet': function () { ui.sheet = null; ui.summary = null; ui.day = null; render(); },
       'hist-toggle': function (d) { ui.open[d.id] = !ui.open[d.id]; render(); },
       'hist-del': function (d) {
         state.sessions = state.sessions.filter(function (s) { return s.id !== d.id; }); save(); render();
@@ -429,22 +452,31 @@
 
     /* ---------- views ---------- */
     function viewHome() {
-      var st = getStats(), now = Date.now(), ws = weekStart(now), next = nextWorkout();
+      var st = getStats(), now = Date.now(), next = nextWorkout();
+      var ws = weekStart(now) + ui.weekOff * 6048e5, today = dayStart(now);
       var trained = {};
-      state.sessions.forEach(function (s) { trained[dayKey(s.start)] = 1; });
+      state.sessions.forEach(function (s) { trained[dayKey(s.start)] = (trained[dayKey(s.start)] || 0) + 1; });
       var days = DAYS.map(function (n, i) {
         var d = new Date(ws); d.setDate(d.getDate() + i);
-        var k = dayKey(d.getTime());
-        return '<div class="gt-day' + (trained[k] ? ' is-done' : '') + (k === dayKey(now) ? ' is-today' : '') + '"><i>' + ICON.check + '</i>' + n + '</div>';
+        var t = d.getTime(), k = dayKey(t), future = t > today;
+        return '<button class="gt-day' + (trained[k] ? ' is-done' : '') + (t === today ? ' is-today' : '') + '"' +
+          (future ? ' disabled' : ' data-act="day" data-t="' + t + '"') + ' aria-label="' + esc(dateLabel(t, true)) + (trained[k] ? ', trainiert' : '') + '">' +
+          '<i>' + (trained[k] ? ICON.check : '<em>' + d.getDate() + '</em>') + '</i>' + n + '</button>';
       }).join('');
+      var we = new Date(ws); we.setDate(we.getDate() + 6);
+      var weekLabel = ui.weekOff === 0 ? 'Diese Woche' : ui.weekOff === -1 ? 'Letzte Woche' :
+        new Date(ws).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }) + ' – ' + we.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
       var h = '<header><p class="gt-eyebrow">' + esc(new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })) +
         '</p><h1 class="gt-h1">Training</h1></header>';
       if (state.active && !ui.workoutOpen) {
         h += '<button class="gt-resume" data-act="resume"><span class="gt-pulse"></span><span class="gt-grow"><span class="gt-item-title">' +
-          esc(state.active.name) + ' läuft</span><br><span class="gt-item-sub js-elapsed">' + clock((now - state.active.start) / 1000) +
+          esc(state.active.name) + (state.active.backfill ? ' wird nachgetragen' : ' läuft') + '</span><br><span class="gt-item-sub' + (state.active.backfill ? '">' + esc(dateLabel(state.active.start)) : ' js-elapsed">' + clock((now - state.active.start) / 1000)) +
           '</span></span>' + ICON.right + '</button>';
       }
-      h += '<div class="gt-week">' + days + '</div>';
+      h += '<section class="gt-weekbox"><div class="gt-weeknav"><button class="gt-icon-btn" data-act="week-shift" data-dir="-1" aria-label="Woche zurück">' + ICON.left +
+        '</button><span class="gt-weeklabel">' + esc(weekLabel) + '</span><button class="gt-icon-btn" data-act="week-shift" data-dir="1" aria-label="Woche vor"' +
+        (ui.weekOff === 0 ? ' disabled' : '') + '>' + ICON.right + '</button></div><div class="gt-week">' + days + '</div>' +
+        '<p class="gt-weekhint">Tippe auf einen Tag, um ein Training nachzutragen.</p></section>';
       h += '<div class="gt-stats"><div class="gt-stat"><b>' + st.weekSessions + '</b><span>Einheiten</span></div>' +
         '<div class="gt-stat"><b>' + st.streakWeeks + '</b><span>Wochen in Folge</span></div>' +
         '<div class="gt-stat"><b>' + fmtVol(st.weekVolume) + '</b><span>Wochenvolumen</span></div></div>';
@@ -480,12 +512,12 @@
       var a = state.active, total = 0, done = 0;
       a.entries.forEach(function (e) { total += e.sets.length; e.sets.forEach(function (s) { if (s.done) done++; }); });
       var h = '<div class="gt-wo"><header class="gt-wo-head"><button class="gt-icon-btn" data-act="minimize" aria-label="Training minimieren">' + ICON.down +
-        '</button><div class="gt-grow"><div class="gt-wo-name">' + esc(a.name) + '</div><div class="gt-wo-time"><span class="js-elapsed">' +
-        clock((Date.now() - a.start) / 1000) + '</span> · ' + done + ' von ' + total + ' Sätzen</div></div>' +
-        '<button class="gt-btn gt-btn-accent" data-act="finish">Beenden</button></header>' +
+        '</button><div class="gt-grow"><div class="gt-wo-name">' + esc(a.name) + '</div><div class="gt-wo-time">' + (a.backfill ? '<span class="gt-tag">Nachtrag</span> ' + esc(dateLabel(a.start)) :
+        '<span class="js-elapsed">' + clock((Date.now() - a.start) / 1000) + '</span>') + ' · ' + done + ' von ' + total + ' Sätzen</div></div>' +
+        '<button class="gt-btn gt-btn-accent" data-act="finish">' + (a.backfill ? 'Speichern' : 'Beenden') + '</button></header>' +
         '<div class="gt-bar"><i style="width:' + (total ? done / total * 100 : 0) + '%"></i></div><div class="gt-wo-body">';
       a.entries.forEach(function (e, ei) {
-        var prev = lastEntry(key(e.name));
+        var prev = lastEntry(key(e.name), a.start);
         var allDone = e.sets.length && e.sets.every(function (s) { return s.done; });
         var setText = function (x) { return (num(x.w) ? fmt(num(x.w)) + ' × ' : '') + fmt(num(x.r)); };
         if (allDone && !ui.exOpen[ei]) {
@@ -651,13 +683,37 @@
       var h = '';
       if (ui.summary) {
         var s = ui.summary;
-        h = '<div><p class="gt-eyebrow">' + esc(s.name) + ' abgeschlossen</p><h2 class="gt-h1">Stark.</h2></div>' +
+        h = '<div><p class="gt-eyebrow">' + esc(s.name) + (s.backfilled ? ' für ' + esc(dateLabel(s.session.start)) + ' nachgetragen' : ' abgeschlossen') +
+          '</p><h2 class="gt-h1">' + (s.backfilled ? 'Eingetragen.' : 'Stark.') + '</h2></div>' +
           '<div class="gt-sum"><div><b>' + s.durationMin + '</b><span>Min</span></div><div><b>' + s.sets + '</b><span>Sätze</span></div><div><b>' +
           fmtVol(s.volume) + '</b><span>bewegt</span></div></div>' +
           (s.prs.length ? '<div class="gt-section"><h3 class="gt-h2">Neue Rekorde</h3><div class="gt-prlist">' + s.prs.map(function (n) {
             return '<span class="gt-badge">' + esc(n) + '</span>';
           }).join('') + '</div></div>' : '') +
           '<button class="gt-btn gt-btn-accent gt-btn-big" data-act="close-sheet">Fertig</button>';
+      } else if (ui.sheet === 'day' && ui.day != null) {
+        var dayEnd = ui.day + 864e5, isToday = ui.day === dayStart(Date.now());
+        var onDay = state.sessions.filter(function (x) { return x.start >= ui.day && x.start < dayEnd; });
+        h = '<div><p class="gt-eyebrow">' + (isToday ? 'Heute' : 'Nachtragen') + '</p><h2 class="gt-h1">' + esc(dateLabel(ui.day, true)) + '</h2></div>';
+        if (onDay.length) {
+          h += '<div class="gt-section"><h3 class="gt-h2">Eingetragen</h3><div class="gt-list gt-list-sunk">' + onDay.map(function (x) {
+            return '<button class="gt-item" data-act="open-session" data-id="' + x.id + '"><span class="gt-ex-tick">' + ICON.check + '</span><span class="gt-grow"><span class="gt-item-title">' + esc(x.name) +
+              '</span><br><span class="gt-item-sub">' + doneSets(x) + ' Sätze · ' + fmtVol(volume(x)) + '</span></span><span class="gt-icon-btn">' + ICON.right + '</span></button>';
+          }).join('') + '</div></div>';
+        }
+        if (state.active) {
+          h += '<p class="gt-muted">' + esc(state.active.name) + ' ist noch offen. Beende oder verwirf es zuerst, dann kannst du hier etwas eintragen.</p>' +
+            '<button class="gt-btn gt-btn-accent" data-act="resume">Zum offenen Training</button>';
+        } else if (state.plan.length) {
+          var wk = week(isToday ? 0 : ui.day);
+          h += '<div class="gt-section"><h3 class="gt-h2">' + (onDay.length ? 'Weiteres Training' : 'Welches Training?') +
+            (state.ramp ? ' · Woche ' + wk : '') + '</h3><div class="gt-list gt-list-sunk">' + state.plan.map(function (w) {
+            return '<button class="gt-item" data-act="backfill" data-wid="' + w.id + '"><span class="gt-grow"><span class="gt-item-title">' + esc(w.name) +
+              '</span><br><span class="gt-item-sub">' + effective(w, isToday ? 0 : ui.day).length + ' Übungen</span></span><span class="gt-icon-btn">' + (isToday ? ICON.play : ICON.plus) + '</span></button>';
+          }).join('') + '</div></div>' +
+            (isToday ? '' : '<label class="gt-field gt-field-inline">Dauer in Minuten<input class="gt-text js-bf-min" id="gt-bf-min" inputmode="numeric" value="60"></label>');
+        }
+        h += '<button class="gt-btn gt-btn-ghost" data-act="close-sheet">Schließen</button>';
       } else if (ui.sheet === 'plan') {
         h = '<div><h2 class="gt-h1">Plan einfügen</h2><p class="gt-muted">Eine Zeile pro Übung im Format „Name 3x8-12“. Eine Zeile ohne Sätze beginnt ein neues Training.</p></div>' +
           '<textarea class="gt-text js-plan-text" id="gt-plan-text" aria-label="Trainingsplan als Text" placeholder="Push\nBankdrücken 3x6-10\nSeitheben 3x12-15\n\nPull\nKlimmzüge 3x6-10"></textarea>' +

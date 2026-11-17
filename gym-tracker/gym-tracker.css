@@ -110,7 +110,9 @@
 
 /* ---------- home ---------- */
 .gt-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.gt-day { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--gt-muted); }
+.gt .gt-day { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--gt-muted); min-width: 0; transition: transform .08s ease; }
+.gt .gt-day:active:not(:disabled) { transform: scale(.92); }
+.gt .gt-day:disabled { cursor: default; opacity: .45; }
 .gt-day i {
   width: 100%; max-width: 40px; aspect-ratio: 1; border-radius: 50%;
   display: grid; place-items: center; background: var(--gt-surface-2); color: transparent;
@@ -118,7 +120,7 @@
 .gt-day i svg { width: 16px; height: 16px; stroke-width: 3; }
 .gt-day.is-done i { background: var(--gt-good); color: var(--gt-bg); }
 .gt-day.is-today i { box-shadow: 0 0 0 2px var(--gt-bg), 0 0 0 4px var(--gt-accent); }
-.gt-day.is-today { color: var(--gt-fg); }
+.gt .gt-day.is-today { color: var(--gt-fg); }
 
 .gt-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
 .gt-stat { padding: 0 12px; border-left: 1px solid var(--gt-line); min-width: 0; }
@@ -305,3 +307,16 @@
 .gt .gt-item-static { cursor: default; padding-right: 16px; }
 .gt-hero .gt-exlist li:first-child { border-top: 0; padding-top: 0; }
 .gt-hero .gt-exlist li:last-child { padding-bottom: 0; }
+
+/* ---------- week navigation + backfill ---------- */
+.gt-weekbox { display: flex; flex-direction: column; gap: 10px; }
+.gt-weeknav { display: flex; align-items: center; justify-content: space-between; margin: -6px -10px 0; }
+.gt-weeklabel { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--gt-muted); }
+.gt .gt-weeknav .gt-icon-btn:disabled { opacity: .3; cursor: default; }
+.gt-day em { font: 700 16px/1 var(--gt-display); font-style: normal; color: var(--gt-muted); }
+.gt-day.is-today em { color: var(--gt-fg); }
+.gt-weekhint { margin: 0; font-size: 12px; color: var(--gt-muted); text-align: center; }
+.gt-tag { display: inline-block; font: 700 11px/1 var(--gt-body); letter-spacing: .06em; text-transform: uppercase; padding: 3px 6px; border-radius: 6px; background: var(--gt-accent-soft); color: var(--gt-accent); vertical-align: 1px; }
+.gt-list-sunk { background: var(--gt-surface-2); }
+.gt-list-sunk .gt-item { border-color: var(--gt-line); }
+.gt-field-inline { max-width: 200px; }
