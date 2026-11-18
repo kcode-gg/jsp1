@@ -16,7 +16,7 @@
   var ex = function (name, sets, reps, rest, bar, note, power) {
     return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar, note: note || '', power: !!power };
   };
-  var PLAN_VERSION = 4;
+  var PLAN_VERSION = 5;
   var OLD_LATER = 'Erst ab Woche 3 und nur, wenn der Rücken ruhig bleibt';
   var LATER = 'Nur, wenn der Rücken dabei ruhig bleibt';
   var RULES = [
@@ -29,9 +29,9 @@
     return [
       ex('Schrägbankdrücken Kurzhanteln', 3, '8-10', 150),
       ex('Klimmzüge', 3, '6-10', 150),
-      ex('Beinstrecker Maschine', 3, '10-12', 90),
+      ex('Beinstrecker', 3, '10-12', 90),
       ex('Dips', 2, '8-12', 150),
-      ex('Kurzhantel-Curls', 3, '10-12', 90),
+      ex('Schrägbank-Curls', 3, '10-12', 90),
       ex('Face Pulls', 3, '12-15', 75)];
   }
   function defaultPlan() {
@@ -64,9 +64,14 @@
   function normalize(s) {
     if (!s || !Array.isArray(s.plan)) s = { v: 1, planV: PLAN_VERSION, plan: defaultPlan(), sessions: [], active: null };
     if (s.planV === 2) s.plan.forEach(function (w) { w.exercises.forEach(function (x) { x.power = x.note === OLD_LATER; }); });
-    else if (s.planV !== 3 && s.planV !== PLAN_VERSION) s.plan = defaultPlan();
+    else if (s.planV !== 3 && s.planV !== 4 && s.planV !== PLAN_VERSION) s.plan = defaultPlan();
     // v4: new Tag B; the rest of the plan and any own edits stay as they are
     if (s.planV === 2 || s.planV === 3) s.plan.forEach(function (w) { if (w.name === 'Tag B') w.exercises = dayB(); });
+    // v5: plan names match what is logged, so "Letztes Mal" and progress carry over
+    if (s.planV === 4) {
+      var rename = { 'Beinstrecker Maschine': 'Beinstrecker', 'Kurzhantel-Curls': 'Schrägbank-Curls' };
+      s.plan.forEach(function (w) { w.exercises.forEach(function (x) { if (rename[x.name]) x.name = rename[x.name]; }); });
+    }
     s.planV = PLAN_VERSION;
     s.plan.forEach(function (w) { w.exercises.forEach(function (x) { if (x.note === OLD_LATER) x.note = LATER; }); });
     s.sessions = s.sessions || [];
