@@ -16,7 +16,7 @@
   var ex = function (name, sets, reps, rest, bar, note, power) {
     return { id: uid(), name: name, sets: sets, reps: reps, rest: rest, bar: !!bar, note: note || '', power: !!power };
   };
-  var PLAN_VERSION = 3;
+  var PLAN_VERSION = 4;
   var OLD_LATER = 'Erst ab Woche 3 und nur, wenn der Rücken ruhig bleibt';
   var LATER = 'Nur, wenn der Rücken dabei ruhig bleibt';
   var RULES = [
@@ -25,6 +25,15 @@
     'Pausen: 2–3 Min bei Grundübungen, 1–2 Min bei Isolation',
     'Schaffst du in allen Sätzen die obere Wiederholungszahl, erhöhst du das Gewicht.'
   ];
+  function dayB() {
+    return [
+      ex('Schrägbankdrücken Kurzhanteln', 3, '8-10', 150),
+      ex('Klimmzüge', 3, '6-10', 150),
+      ex('Beinstrecker Maschine', 3, '10-12', 90),
+      ex('Dips', 2, '8-12', 150),
+      ex('Kurzhantel-Curls', 3, '10-12', 90),
+      ex('Face Pulls', 3, '12-15', 75)];
+  }
   function defaultPlan() {
     return [
       { id: uid(), name: 'Tag A', exercises: [
@@ -36,14 +45,7 @@
         ex('Kabel-Flys', 2, '12-15', 90),
         ex('Seitheben', 3, '12-20', 75),
         ex('Trizeps über Kopf am Kabel', 3, '10-15', 90)] },
-      { id: uid(), name: 'Tag B', exercises: [
-        ex('Schrägbankdrücken Kurzhanteln', 3, '8-10', 150),
-        ex('Klimmzüge', 3, '6-10', 150),
-        ex('Bulgarian Split Squats', 3, '8/Seite', 150),
-        ex('Dips', 2, '8-12', 150),
-        ex('Schrägbank-Curls', 3, '10-12', 90),
-        ex('Face Pulls', 2, '15', 75),
-        ex('Außenrotation am Kabel', 2, '15', 75)] },
+      { id: uid(), name: 'Tag B', exercises: dayB() },
       { id: uid(), name: 'Tag C', exercises: [
         ex('Box Jumps', 3, '5', 90, false, LATER, true),
         ex('10-m-Sprints mit Richtungswechsel', 4, '1', 90, false, LATER, true),
@@ -62,7 +64,9 @@
   function normalize(s) {
     if (!s || !Array.isArray(s.plan)) s = { v: 1, planV: PLAN_VERSION, plan: defaultPlan(), sessions: [], active: null };
     if (s.planV === 2) s.plan.forEach(function (w) { w.exercises.forEach(function (x) { x.power = x.note === OLD_LATER; }); });
-    else if (s.planV !== PLAN_VERSION) s.plan = defaultPlan();
+    else if (s.planV !== 3 && s.planV !== PLAN_VERSION) s.plan = defaultPlan();
+    // v4: new Tag B; the rest of the plan and any own edits stay as they are
+    if (s.planV === 2 || s.planV === 3) s.plan.forEach(function (w) { if (w.name === 'Tag B') w.exercises = dayB(); });
     s.planV = PLAN_VERSION;
     s.plan.forEach(function (w) { w.exercises.forEach(function (x) { if (x.note === OLD_LATER) x.note = LATER; }); });
     s.sessions = s.sessions || [];
